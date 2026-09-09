@@ -1,0 +1,141 @@
+name: Deploy EKS Cluster
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: deploy ou destroy
+        required: true
+        default: deploy
+        type: choice
+        options:
+          - deploy
+          - destroy
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  TF_IN_AUTOMATION: "true"
+
+jobs:
+  deploy:
+    name: Deploy EKS
+    if: ${{ inputs.action == 'deploy' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Terraform init
+        run: terraform init
+
+      - name: Terraform fmt
+        run: terraform fmt -check
+
+      - name: Terraform validate
+        run: terraform validate
+
+      - name: Terraform plan
+        run: terraform plan -out=tfplan
+
+      - name: Terraform apply
+        run: terraform apply -auto-approve tfplan
+
+      - name: Configure kubeconfig
+        run: aws eks update-kubeconfig --region "${AWS_REGION}" --name oficina-eks
+
+      - name: Install metrics-server
+        run: |
+          kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+          kubectl rollout status deployment/metrics-server -n kube-system --timeout=180s
+
+      - name: Print cluster info
+        run: |
+          echo "Cluster pronto. Nos repos oficina e oficina-lambda, usem:"
+          echo "aws eks update-kubeconfig --region ${AWS_REGION} --name oficina-eks"
+          kubectl get nodes
+
+  destroy:
+    name: Destroy EKS
+    if: ${{ inputs.action == 'destroy' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Terraform init
+        run: terraform init
+
+      # Rede de seguranca: garante que o Service/LoadBalancer da aplicacao
+      # nao fica orfao caso alguem esqueca de rodar o destroy do repo `oficina` antes.
+      - name: Remove leftover application resources
+        run: |
+          if aws eks describe-cluster --name oficina-eks --region "${AWS_REGION}" >/dev/null 2>&1; then
+            aws eks update-kubeconfig --region "${AWS_REGION}" --name oficina-eks
+
+            LB_DNS=$(kubectl get svc oficina-api -n oficina -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+            if [ -n "${LB_DNS}" ]; then
+              LB_NAME="${LB_DNS%%.*}"
+              echo "Load Balancer detectado: ${LB_NAME}"
+              echo "LB_NAME=${LB_NAME}" >> "${GITHUB_ENV}"
+            fi
+
+            kubectl delete namespace oficina --ignore-not-found --timeout=120s
+          else
+            echo "Cluster oficina-eks nao encontrado; nada a limpar"
+          fi
+
+      - name: Wait for Load Balancer removal
+        run: |
+          if [ -z "${LB_NAME}" ]; then
+            echo "Nenhum Load Balancer detectado; seguindo"
+            exit 0
+          fi
+
+          for i in {1..30}; do
+            if ! aws elbv2 describe-load-balancers --names "${LB_NAME}" --region "${AWS_REGION}" >/dev/null 2>&1 \
+               && ! aws elb describe-load-balancers --load-balancer-names "${LB_NAME}" --region "${AWS_REGION}" >/dev/null 2>&1; then
+              echo "Load Balancer removido"
+              exit 0
+            fi
+            sleep 20
+          done
+
+          echo "Load Balancer ainda pode existir; seguindo mesmo assim"
+
+      - name: Terraform destroy
+        run: terraform destroy -auto-approve

@@ -1,0 +1,14 @@
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+crash.log
+crash.*.log
+
+# kubeconfig
+*kubeconfig*
+*.kubeconfig
+
+# IDE
+.idea/
