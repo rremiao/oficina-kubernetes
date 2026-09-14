@@ -1,0 +1,64 @@
+# Values do chart oficial `newrelic/nri-bundle`, adaptado pro cluster oficina-eks.
+#
+# O bundle instala, num Helm release só:
+#   - Infrastructure agent (DaemonSet)  -> CPU/memória de nodes e pods, healthchecks
+#   - kube-state-metrics + newrelic-prometheus-agent -> estado de Deployments/HPA/etc.
+#   - Logging (Fluent Bit)              -> logs estruturados dos containers
+#   - Postgres integration (nri-postgresql) -> métricas do RDS (oficina-database)
+#
+# A license key NÃO fica neste arquivo. Ela é lida do Secret `newrelic-license`
+# (ver newrelic-secret.example.yaml), referenciado abaixo via `global.customSecretName`.
+#
+# Uso:
+#   helm repo add newrelic https://helm-charts.newrelic.com
+#   helm repo update
+#   kubectl apply -f newrelic-secret.yaml   # com a license key real, nunca commitada
+#   helm upgrade --install newrelic-bundle newrelic/nri-bundle \
+#     -n newrelic --create-namespace \
+#     -f observability/newrelic-values.yaml
+
+global:
+  cluster: oficina-eks
+  # Nome do Secret com a license key. O Secret precisa ter a chave `licenseKey`.
+  customSecretName: newrelic-license
+  customSecretLicenseKey: licenseKey
+
+# Infrastructure agent (DaemonSet) — CPU, memória, healthchecks, discovery de containers.
+infrastructure:
+  enabled: true
+  privileged: true
+
+# kube-state-metrics — estado de Deployments, HPA, Pods (pending/failing etc.).
+kube-state-metrics:
+  enabled: true
+
+# Fluent Bit — coleta e envia os logs dos containers em JSON.
+logging:
+  enabled: true
+
+# Prometheus agent — permite raspar métricas customizadas expostas pela app
+# (ex.: Micrometer com endpoint /actuator/prometheus, se habilitado futuramente).
+newrelic-prometheus-agent:
+  enabled: true
+  lowDataMode: true
+
+# Postgres integration — métricas do RDS (oficina-database). Autodiscovery aponta
+# pro endpoint do RDS via annotation no próprio Deployment/Service (ver postgres-integration.md).
+newrelic-infra-operator:
+  enabled: false # habilitar quando o RDS + usuário de monitoramento estiverem provisionados
+
+newrelic-infrastructure:
+  privileged: true
+
+# k8s-agents-operator — injeta o APM agent Java automaticamente nos pods marcados com o label
+# `instrumentation.newrelic.com/inject-java: "true"` (ver k8s/06-newrelic-instrumentation.yaml).
+# Vantagem: nenhuma alteração no Dockerfile/pom.xml do repositório `oficina` — a instrumentação
+# acontece via init container injetado pelo operator no momento em que o Pod sobe.
+k8s-agents-operator:
+  enabled: true
+  admissionWebhooks:
+    certManager:
+      enabled: false # Academy Lab não tem cert-manager por padrão; usa certs autoassinados do operator
+
+ksm:
+  enabled: true

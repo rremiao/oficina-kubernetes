@@ -1,0 +1,20 @@
+# Instrumentation CR consumido pelo k8s-agents-operator (parte do newrelic-bundle, instalado no
+# namespace `newrelic` — ver observability/newrelic-values.yaml).
+#
+# Qualquer Pod no namespace `oficina` com o label `instrumentation.newrelic.com/inject-java: "true"`
+# recebe automaticamente, via webhook de admissão, um init container que injeta o APM agent Java
+# (dd-java-agent equivalente da New Relic) — sem precisar alterar o Dockerfile nem o pom.xml da
+# aplicação em `oficina`. O label é aplicado no Deployment em 03-app-deployment.yaml.
+apiVersion: newrelic.com/v1beta3 # storage version do CRD instalado pelo k8s-agents-operator
+kind: Instrumentation
+metadata:
+  name: oficina-api-java
+  namespace: oficina
+spec:
+  agent:
+    language: java
+    image: newrelic/newrelic-java-init:latest # init container que injeta o dd-java-agent equivalente
+  licenseKeySecret: newrelic-license # mesmo Secret usado pelo Infrastructure agent
+  podLabelSelector:
+    matchLabels:
+      app.kubernetes.io/name: oficina-api

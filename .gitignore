@@ -1,0 +1,20 @@
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!terraform.tfvars.example
+crash.log
+crash.*.log
+
+# New Relic (license key real, nunca commitar)
+observability/newrelic-secret.yaml
+observability/nri-postgresql-secret.yaml
+observability/nri-postgresql-config.yaml
+
+# OS / editores
+.DS_Store
+.idea/
+*.iml
+*.tfplan
+k8s/01-configmap.yaml
