@@ -1,0 +1,102 @@
+# Monitoramento do RDS (oficina-database) via nri-postgresql, rodando como Deployment próprio.
+#
+# O nri-bundle instalado em observability/newrelic-values.yaml usa a arquitetura "nrk8s-*"
+# (newrelic-infrastructure/nri-kubernetes), que não expõe on-host integrations clássicas
+# (integrations.d) como o agent legado. Por isso o Postgres é monitorado por um segundo componente,
+# independente do bundle: um Deployment rodando `newrelic/infrastructure-bundle`, que é o mesmo
+# binário do Infrastructure agent + o conjunto de integrações on-host (nri-postgresql entre elas).
+# Roda como qualquer pod normal na VPC do cluster, então alcança o RDS pela rede sem precisar de
+# IAM — só usuário/senha do Postgres.
+#
+# Pré-requisito: usuário de monitoramento já criado no RDS (ver docs/rfc ou aplicar manualmente):
+#   CREATE USER newrelic_monitor WITH PASSWORD '<definido no Secret nri-postgresql-db-credentials>';
+#   GRANT pg_monitor TO newrelic_monitor;
+#   GRANT CONNECT ON DATABASE oficina TO newrelic_monitor;
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nri-postgresql-config
+  namespace: newrelic
+data:
+  postgresql-config.yml: |
+    # A senha NÃO é passada por variável de ambiente comum (${VAR} não é expandido nesse contexto
+    # pelo agent — foi tentado e falhou com "password failed for user", porque o valor literal
+    # "${NRI_POSTGRESQL_PASSWORD}" era enviado como senha). O mecanismo oficial é "secrets management":
+    # um bloco `variables` que roda um comando (aqui, `cat` no arquivo do Secret montado como volume)
+    # e referencia o resultado via ${nome_da_variavel} dentro do `env` da integração.
+    # https://docs.newrelic.com/docs/infrastructure/host-integrations/installation/secrets-management/
+    variables:
+      postgres_pw:
+        command:
+          path: '/bin/cat'
+          args: ['/etc/newrelic-infra/secrets/postgres-password']
+          ttl: 1h
+    integrations:
+      - name: nri-postgresql
+        env:
+          HOSTNAME: __RDS_ENDPOINT__
+          PORT: "5432"
+          USERNAME: newrelic_monitor
+          PASSWORD: ${postgres_pw}
+          DATABASE: oficina
+          COLLECTION_LIST: '["oficina"]'
+          ENABLE_SSL: "true"
+          TRUST_SERVER_CERTIFICATE: "true" # obrigatório em RDS/Aurora (certificado gerenciado pela AWS)
+          IS_RDS: "true" # habilita ajustes de query performance monitoring específicos de RDS/Aurora
+        interval: 30s
+        labels:
+          env: aws-academy
+          role: postgresql-monitor
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nri-postgresql-monitor
+  namespace: newrelic
+  labels:
+    app.kubernetes.io/name: nri-postgresql-monitor
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: nri-postgresql-monitor
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: nri-postgresql-monitor
+    spec:
+      containers:
+        - name: infra-agent
+          image: newrelic/infrastructure-bundle:3.2.40
+          env:
+            - name: NRIA_LICENSE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: newrelic-license
+                  key: licenseKey
+            - name: NRIA_DISPLAY_NAME
+              value: "oficina-rds-monitor"
+          volumeMounts:
+            - name: integrations-config
+              mountPath: /etc/newrelic-infra/integrations.d/postgresql-config.yml
+              subPath: postgresql-config.yml
+            - name: db-credentials
+              mountPath: /etc/newrelic-infra/secrets
+              readOnly: true
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "100Mi"
+            limits:
+              cpu: "150m"
+              memory: "200Mi"
+      volumes:
+        - name: integrations-config
+          configMap:
+            name: nri-postgresql-config
+        - name: db-credentials
+          secret:
+            secretName: nri-postgresql-db-credentials
+            items:
+              - key: password
+                path: postgres-password

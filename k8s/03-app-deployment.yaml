@@ -1,0 +1,65 @@
+﻿apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oficina-api
+  namespace: oficina
+  labels:
+    app.kubernetes.io/name: oficina-api
+    app.kubernetes.io/component: api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: oficina-api
+      app.kubernetes.io/component: api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: oficina-api
+        app.kubernetes.io/component: api
+      annotations:
+        # Aciona a injeção automática do APM agent Java pelo k8s-agents-operator do New Relic
+        # (ver observability/newrelic-values.yaml e k8s/06-newrelic-instrumentation.yaml).
+        # Não exige nenhuma alteração no Dockerfile/pom.xml do repositório `oficina`.
+        instrumentation.newrelic.com/inject-java: "true"
+    spec:
+      containers:
+        - name: oficina-api
+          image: anthonymeds/oficina-api:aws-v1
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: NEW_RELIC_APP_NAME
+              value: "oficina-api"
+            - name: NEW_RELIC_LABELS
+              value: "env:aws-academy;repo:oficina"
+          envFrom:
+            - configMapRef:
+                name: oficina-config
+            - secretRef:
+                name: oficina-secret
+          readinessProbe:
+            httpGet:
+              path: /oficina/v1/api-docs
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 10
+          livenessProbe:
+            httpGet:
+              path: /oficina/v1/api-docs
+              port: http
+            initialDelaySeconds: 90
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "500m"
+              memory: "768Mi"

@@ -1,0 +1,13 @@
+aws_region = "us-east-1"
+
+project_name = "oficina"
+cluster_name = "oficina-eks"
+
+# t3.small suporta poucos pods por node (limite de ENI/IP da instância, ~11 pods). Um único node já
+# fica saturado só com os pods de sistema do EKS (CoreDNS, kube-proxy, aws-node) + o bundle do New
+# Relic (7 pods) — confirmado na prática: com desired_size=1 o Helm install trava esperando um pod
+# (webhook admission-patch) que nunca consegue ser agendado. Por isso o padrão já é 2.
+node_instance_type = "t3.small"
+node_desired_size  = 2
+node_min_size      = 1
+node_max_size      = 2

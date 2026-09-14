@@ -1,0 +1,74 @@
+name: Validate Kubernetes Infrastructure
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-terraform:
+    name: Validate Terraform
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Check Terraform formatting
+        run: terraform -chdir=infra fmt -check
+
+      - name: Initialize Terraform without backend
+        run: terraform -chdir=infra init -backend=false
+
+      - name: Validate Terraform configuration
+        run: terraform -chdir=infra validate
+
+  validate-manifests:
+    name: Validate Kubernetes manifests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up kubeconform
+        run: |
+          curl -sL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar xz
+          sudo mv kubeconform /usr/local/bin/
+
+      - name: Validate manifests (schema)
+        run: |
+          # 01-configmap.yaml.tpl não é YAML puro (tem o placeholder __RDS_ENDPOINT__),
+          # por isso é validado à parte, com o placeholder preenchido só para fins de lint.
+          kubeconform -strict -summary k8s/00-namespace.yaml k8s/02-secret.yaml \
+            k8s/03-app-deployment.yaml k8s/04-app-service-loadbalancer.yaml k8s/05-hpa.yaml
+          sed 's/__RDS_ENDPOINT__/localhost/' k8s/01-configmap.yaml.tpl | kubeconform -strict -summary -
+
+      - name: Print infrastructure instructions
+        run: |
+          echo "Terraform e manifests validados."
+          echo
+          echo "O apply e o destroy do Terraform, e o kubectl apply dos manifests,"
+          echo "nao sao executados pelo GitHub Actions (state local, sem credenciais"
+          echo "persistentes no Learner Lab)."
+          echo
+          echo "Provisionamento do cluster:"
+          echo "  terraform -chdir=infra plan -out=tfplan"
+          echo "  terraform -chdir=infra apply tfplan"
+          echo
+          echo "Aplicacao dos manifests apos o cluster estar de pe:"
+          echo "  kubectl apply -f k8s/00-namespace.yaml"
+          echo "  kubectl apply -f k8s/02-secret.yaml"
+          echo "  kubectl apply -f k8s/03-app-deployment.yaml"
+          echo "  kubectl apply -f k8s/04-app-service-loadbalancer.yaml"
+          echo "  kubectl apply -f k8s/05-hpa.yaml"
