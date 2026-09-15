@@ -90,6 +90,22 @@ chave JWT. O HPA ajusta a quantidade de réplicas do `Deployment` conforme a uti
 
 ## Execução e deploy
 
+### 0. Bootstrap do bucket de state (uma vez só, por conta AWS)
+
+O backend `s3` é parcial de propósito (`backend "s3" {}` em `versions.tf`) — o bucket não é
+provisionado pelo próprio Terraform deste repositório. Criar manualmente antes do primeiro `init`:
+
+```bash
+BUCKET="oficina-kubernetes-tfstate-$(aws sts get-caller-identity --query Account --output text)"
+aws s3api create-bucket --bucket "$BUCKET" --region us-east-1
+aws s3api put-bucket-versioning --bucket "$BUCKET" --versioning-configuration Status=Enabled
+aws s3api put-public-access-block --bucket "$BUCKET" \
+  --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+```
+
+No AWS Academy Learner Lab, a conta é reciclada periodicamente — se o bucket sumir, este passo
+precisa ser refeito antes de qualquer `terraform init`.
+
 ### 1. Provisionar o cluster
 
 ```bash
@@ -97,7 +113,11 @@ cd infra
 cp terraform.tfvars.example terraform.tfvars
 # edite terraform.tfvars conforme necessário
 
-terraform init
+terraform init \
+  -backend-config="bucket=<bucket-do-bootstrap-acima>" \
+  -backend-config="key=oficina-kubernetes/terraform.tfstate" \
+  -backend-config="region=us-east-1"
+
 terraform plan -out=tfplan
 terraform apply tfplan
 ```
@@ -196,15 +216,33 @@ terraform -chdir=infra destroy
 
 ## Pipeline (CI/CD)
 
-O workflow [`infra-kubernetes.yml`](.github/workflows/infra-kubernetes.yml) roda em push/PR para
-`main` e faz duas validações independentes:
+O workflow [`infra-kubernetes.yml`](.github/workflows/infra-kubernetes.yml) tem três jobs:
 
-- **Terraform**: `fmt -check`, `init -backend=false`, `validate`.
-- **Manifests**: valida o schema de cada YAML com `kubeconform`.
+- **`validate-terraform`** (push e PR): `fmt -check`, `init -backend=false`, `validate`.
+- **`validate-manifests`** (push e PR): valida o schema de cada YAML com `kubeconform`.
+- **`deploy`** (só push na `main`, ou disparo manual): aplica o Terraform de verdade
+  (`terraform apply -auto-approve`), provisionando o cluster EKS, usando o state remoto no bucket S3
+  do bootstrap acima.
 
-O `apply`/`destroy` do Terraform e o `kubectl apply` dos manifests **não** são executados pela
-pipeline — o Learner Lab não garante credenciais persistentes entre execuções do GitHub Actions, então
-o provisionamento e o deploy são feitos manualmente a partir da sessão AWS Academy ativa.
+O `deploy` cobre só o Terraform (o cluster em si) — o `kubectl apply` dos manifests e a instalação do
+New Relic (Helm) continuam manuais, porque dependem do cluster já estar de pé e de segredos (license
+key, senha do banco) que não fazem sentido guardar como GitHub Secret de uma pipeline que não os usa
+diretamente. Passo a passo completo no [runbook](docs/runbook-ambiente-completo.md).
+
+O `deploy` depende de credenciais AWS válidas configuradas como **Secrets** do repositório
+(Settings → Secrets and variables → Actions):
+
+| Nome | Tipo | Conteúdo |
+|---|---|---|
+| `AWS_ACCESS_KEY_ID` | Secret | Credencial temporária da sessão AWS Academy |
+| `AWS_SECRET_ACCESS_KEY` | Secret | Credencial temporária da sessão AWS Academy |
+| `AWS_SESSION_TOKEN` | Secret | Credencial temporária da sessão AWS Academy |
+| `TF_STATE_BUCKET` | Variable | Nome do bucket criado no bootstrap acima |
+
+**Importante**: como o Learner Lab usa credenciais de sessão (expiram em poucas horas, mudam a cada
+"Start Lab"), os 3 secrets de AWS precisam ser **atualizados manualmente antes de cada push que deva
+disparar um deploy real** — a pipeline falha com uma mensagem clara (`Credenciais AWS invalidas ou
+expiradas`) se estiverem vencidas, em vez de tentar aplicar com credencial inválida.
 
 ## Decisões arquiteturais
 
@@ -213,6 +251,7 @@ o provisionamento e o deploy são feitos manualmente a partir da sessão AWS Aca
 - [ADR-0002 — Escolha da ferramenta de observabilidade](docs/adr/0002-escolha-da-ferramenta-de-observabilidade.md)
 - [ADR-0003 — Ajustes descobertos na primeira implantação real](docs/adr/0003-licoes-da-primeira-implantacao-real.md)
 - [ADR-0004 — Dashboards, alerta de negócio e Synthetic Monitor](docs/adr/0004-dashboards-alertas-e-synthetic-monitor.md)
+- [ADR-0005 — Deploy automático do Terraform via pipeline, com state remoto](docs/adr/0005-deploy-automatico-via-pipeline.md)
 
 ## Swagger / Postman
 

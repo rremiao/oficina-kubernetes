@@ -1,4 +1,4 @@
-name: Validate Kubernetes Infrastructure
+name: Kubernetes Infrastructure
 
 on:
   pull_request:
@@ -9,6 +9,15 @@ on:
 
 permissions:
   contents: read
+
+# Um apply de cada vez: dois em paralelo no mesmo state se atrapalham.
+concurrency:
+  group: oficina-kubernetes-deploy
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  TERRAFORM_VERSION: "1.9.8"
 
 jobs:
   validate-terraform:
@@ -22,6 +31,8 @@ jobs:
 
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
 
       - name: Check Terraform formatting
         run: terraform -chdir=infra fmt -check
@@ -54,21 +65,77 @@ jobs:
             k8s/03-app-deployment.yaml k8s/04-app-service-loadbalancer.yaml k8s/05-hpa.yaml
           sed 's/__RDS_ENDPOINT__/localhost/' k8s/01-configmap.yaml.tpl | kubeconform -strict -summary -
 
-      - name: Print infrastructure instructions
+  # Só roda em push na main (nunca em PR) — é quem de fato provisiona o cluster EKS. Depende das
+  # credenciais temporárias do AWS Academy estarem atualizadas nos secrets do repositório (ver README).
+  # Aplica só o Terraform (o cluster) — os manifests Kubernetes e a instalação do New Relic continuam
+  # manuais, documentados no README e no runbook, porque dependem do cluster já estar de pé e de
+  # segredos (license key, senha do banco) que não fazem sentido guardar como GitHub Secret aqui.
+  deploy:
+    name: Apply Terraform
+    needs: [validate-terraform, validate-manifests]
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Validate AWS identity
         run: |
-          echo "Terraform e manifests validados."
-          echo
-          echo "O apply e o destroy do Terraform, e o kubectl apply dos manifests,"
-          echo "nao sao executados pelo GitHub Actions (state local, sem credenciais"
-          echo "persistentes no Learner Lab)."
-          echo
-          echo "Provisionamento do cluster:"
-          echo "  terraform -chdir=infra plan -out=tfplan"
-          echo "  terraform -chdir=infra apply tfplan"
-          echo
-          echo "Aplicacao dos manifests apos o cluster estar de pe:"
-          echo "  kubectl apply -f k8s/00-namespace.yaml"
-          echo "  kubectl apply -f k8s/02-secret.yaml"
-          echo "  kubectl apply -f k8s/03-app-deployment.yaml"
-          echo "  kubectl apply -f k8s/04-app-service-loadbalancer.yaml"
-          echo "  kubectl apply -f k8s/05-hpa.yaml"
+          set -euo pipefail
+
+          if ! aws sts get-caller-identity; then
+            echo "::error::Credenciais AWS invalidas ou expiradas."
+            echo "::error::O Learner Lab renova as credenciais a cada sessao. Atualize os secrets AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY e AWS_SESSION_TOKEN."
+            exit 1
+          fi
+
+      - name: Check state bucket configured
+        run: |
+          set -euo pipefail
+
+          if [ -z "${{ vars.TF_STATE_BUCKET }}" ]; then
+            echo "::error::Variavel TF_STATE_BUCKET nao configurada no repositorio."
+            echo "::error::Crie o bucket (ver README, secao Bootstrap) e configure a variavel antes do deploy."
+            exit 1
+          fi
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Apply Terraform
+        working-directory: infra
+        run: |
+          set -euo pipefail
+
+          terraform init -input=false \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="key=oficina-kubernetes/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION}"
+
+          terraform apply -auto-approve -input=false
+
+      - name: Export outputs
+        working-directory: infra
+        run: |
+          set -euo pipefail
+
+          {
+            echo "Cluster: $(terraform output -raw cluster_name)"
+            echo "Endpoint: $(terraform output -raw cluster_endpoint)"
+            echo
+            echo "Próximos passos manuais (ver README): aws eks update-kubeconfig, instalar o"
+            echo "New Relic e aplicar os manifests em k8s/."
+          } >> "$GITHUB_STEP_SUMMARY"
