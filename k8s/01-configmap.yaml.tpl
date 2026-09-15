@@ -7,6 +7,11 @@ metadata:
     app.kubernetes.io/name: oficina-api
 data:
   SPRING_PROFILES_ACTIVE: "docker"
+  # A aplicacao le esta variavel em logging.structured.ecs.service.environment
+  # (application-docker.properties). Sem ela todo log estruturado sai marcado como
+  # "producao", inclusive em homologacao, e os eventos ficam misturados no New Relic.
+  # Use o mesmo nome de ambiente do Terraform do oficina-lambda (hml ou prd).
+  ENVIRONMENT: "hml"
   SPRING_DATASOURCE_URL: "jdbc:postgresql://__RDS_ENDPOINT__:5432/oficina"
   SERVER_PORT: "8080"
   SECURITY_JWT_EXPIRATION: "7200000"
