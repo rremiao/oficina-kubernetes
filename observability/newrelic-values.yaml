@@ -22,6 +22,9 @@ global:
   # Nome do Secret com a license key. O Secret precisa ter a chave `licenseKey`.
   customSecretName: newrelic-license
   customSecretLicenseKey: licenseKey
+  # Com a license key num Secret o chart nao consegue deduzir a regiao da conta, e o newrelic-logging
+  # recusa instalar sem ela. US = conta criada na regiao americana (EU para contas europeias).
+  region: US
 
 # Infrastructure agent (DaemonSet) — CPU, memória, healthchecks, discovery de containers.
 infrastructure:
