@@ -7,7 +7,10 @@ cluster_name = "oficina-eks"
 # fica saturado só com os pods de sistema do EKS (CoreDNS, kube-proxy, aws-node) + o bundle do New
 # Relic (7 pods) — confirmado na prática: com desired_size=1 o Helm install trava esperando um pod
 # (webhook admission-patch) que nunca consegue ser agendado. Por isso o padrão já é 2.
-node_instance_type = "t3.small"
+#
+# Fase 4: três microsserviços Java (OS, Billing, Execution) + RabbitMQ + MongoDB + bundle do New
+# Relic não cabem em t3.small (11 pods e 2 GB por node). t3.medium dá 17 pods e 4 GB por node (ADR-0006).
+node_instance_type = "t3.medium"
 node_desired_size  = 2
 node_min_size      = 1
-node_max_size      = 2
+node_max_size      = 3

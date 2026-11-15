@@ -23,15 +23,15 @@ variable "lab_role_name" {
 }
 
 variable "node_instance_type" {
-  description = "Tipo da instância EC2 usada no node group."
+  description = "Tipo da instância EC2 usada no node group. t3.medium: até 17 pods e 4 GB por node (ver ADR-0006)."
   type        = string
-  default     = "t3.small"
+  default     = "t3.medium"
 }
 
 variable "node_desired_size" {
   description = "Quantidade desejada de nodes no node group."
   type        = number
-  default     = 1
+  default     = 2
 }
 
 variable "node_min_size" {
@@ -43,7 +43,7 @@ variable "node_min_size" {
 variable "node_max_size" {
   description = "Quantidade máxima de nodes no node group."
   type        = number
-  default     = 2
+  default     = 3
 }
 
 variable "availability_zones" {

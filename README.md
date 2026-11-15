@@ -65,7 +65,7 @@ continua sendo construída e publicada pelo pipeline do repositório `oficina`.
 flowchart TB
     subgraph AWS["AWS Academy Learner Lab"]
         subgraph EKS["EKS oficina-eks"]
-            NG["Node group (t3.small, 1-2 nodes)"]
+            NG["Node group (t3.medium, 2-3 nodes)"]
             subgraph NS["Namespace oficina"]
                 DEP["Deployment oficina-api\n(HPA: 1-3 réplicas)"]
                 CM["ConfigMap oficina-config"]
@@ -177,8 +177,8 @@ helm upgrade --install newrelic-bundle newrelic/nri-bundle \
 
 > Se o `helm install` travar esperando o pod `nri-metadata-injection-admission-patch` (mensagem
 > `Too many pods` no `kubectl get pods -n newrelic`), o node group está saturado — `t3.small` suporta
-> poucos pods por instância. O `terraform.tfvars.example` já usa `node_desired_size = 2` por causa
-> disso (ver ADR-0003, item 1).
+> poucos pods por instância. Por isso o padrão agora é 2 nodes `t3.medium` (ver ADR-0003, item 1, e
+> ADR-0006).
 
 ```bash
 kubectl apply -f k8s/06-newrelic-instrumentation.yaml
@@ -252,6 +252,7 @@ expiradas`) se estiverem vencidas, em vez de tentar aplicar com credencial invá
 - [ADR-0003 — Ajustes descobertos na primeira implantação real](docs/adr/0003-licoes-da-primeira-implantacao-real.md)
 - [ADR-0004 — Dashboards, alerta de negócio e Synthetic Monitor](docs/adr/0004-dashboards-alertas-e-synthetic-monitor.md)
 - [ADR-0005 — Deploy automático do Terraform via pipeline, com state remoto](docs/adr/0005-deploy-automatico-via-pipeline.md)
+- [ADR-0006 — Capacidade do cluster para a Fase 4](docs/adr/0006-capacidade-do-cluster-para-a-fase-4.md)
 
 ## Swagger / Postman
 
